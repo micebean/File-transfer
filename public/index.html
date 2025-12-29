@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>局域网文件快传</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+</head>
+<body class="bg-slate-100 min-h-screen p-6">
+
+    <div class="max-w-3xl mx-auto space-y-6">
+        
+        <header class="flex justify-between items-center bg-white p-4 rounded-xl shadow-sm">
+            <div>
+                <h1 class="text-xl font-bold text-slate-800">📂 局域网文件共享</h1>
+                <p id="server-ip" class="text-xs text-slate-400">正在获取IP...</p>
+            </div>
+            <button onclick="toggleQR()" class="flex items-center gap-2 text-sm bg-blue-50 text-blue-600 px-3 py-2 rounded-lg hover:bg-blue-100 transition">
+                <span>📱 手机连接</span>
+            </button>
+        </header>
+
+        <div id="qr-container" class="hidden bg-white p-6 rounded-xl shadow-sm text-center animate-fade-in">
+            <p class="text-sm text-slate-500 mb-4">手机扫描下方二维码，无需下载 App 即可互传文件</p>
+            <div id="qrcode" class="flex justify-center"></div>
+        </div>
+
+        <div id="drop-zone" class="bg-white border-2 border-dashed border-blue-300 rounded-xl p-10 text-center cursor-pointer hover:bg-blue-50 transition relative">
+            <input type="file" id="file-input" class="absolute inset-0 w-full h-full opacity-0 cursor-pointer">
+            <div class="space-y-2 pointer-events-none">
+                <div class="text-4xl">☁️</div>
+                <p class="text-slate-600 font-medium">点击或拖拽文件到这里上传</p>
+            </div>
+        </div>
+
+        <div id="progress-container" class="hidden bg-white p-4 rounded-xl shadow-sm space-y-2">
+            <div class="flex justify-between text-sm">
+                <span id="upload-status">正在上传...</span>
+                <span id="upload-percent">0%</span>
+            </div>
+            <div class="w-full bg-gray-200 rounded-full h-2.5">
+                <div id="progress-bar" class="bg-blue-600 h-2.5 rounded-full" style="width: 0%"></div>
+            </div>
+        </div>
+
+        <div class="bg-white rounded-xl shadow-sm overflow-hidden">
+            <div class="p-4 border-b bg-slate-50 flex justify-between items-center">
+                <h2 class="font-bold text-slate-700">已共享文件</h2>
+                <button onclick="loadFiles()" class="text-blue-600 text-sm hover:underline">刷新列表</button>
+            </div>
+            <ul id="file-list" class="divide-y divide-slate-100"></ul>
+        </div>
+    </div>
+
+    <script>
+        const fileInput = document.getElementById('file-input');
+        const progressContainer = document.getElementById('progress-container');
+        const progressBar = document.getElementById('progress-bar');
+        const uploadPercent = document.getElementById('upload-percent');
+
+        // 1. 监听文件选择
+        fileInput.addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (file) uploadFile(file);
+        });
+
+        // 2. 上传核心逻辑 (使用 XMLHttpRequest 以获取进度)
+        function uploadFile(file) {
+            const formData = new FormData();
+            formData.append('file', file);
+
+            // 显示进度条
+            progressContainer.classList.remove('hidden');
+            
+            const xhr = new XMLHttpRequest();
+            xhr.open('POST', '/upload', true);
+
+            // 监听进度
+            xhr.upload.onprogress = (e) => {
+                if (e.lengthComputable) {
+                    const percent = Math.round((e.loaded / e.total) * 100);
+                    progressBar.style.width = percent + '%';
+                    uploadPercent.innerText = percent + '%';
+                }
+            };
+
+            // 上传完成
+            xhr.onload = () => {
+                if (xhr.status === 200) {
+                    alert('✅ 上传成功');
+                    loadFiles(); // 刷新列表
+                } else {
+                    alert('❌ 上传失败');
+                }
+                // 重置进度条
+                setTimeout(() => {
+                    progressContainer.classList.add('hidden');
+                    progressBar.style.width = '0%';
+                }, 1000);
+            };
+
+            xhr.send(formData);
+        }
+
+        // 3. 加载文件列表
+        function loadFiles() {
+            fetch('/api/files')
+                .then(res => res.json())
+                .then(files => {
+                    const list = document.getElementById('file-list');
+                    list.innerHTML = ''; // 清空
+
+                    if (files.length === 0) {
+                        list.innerHTML = '<li class="p-4 text-center text-slate-400 text-sm">暂无文件...</li>';
+                        return;
+                    }
+
+                    files.forEach(file => {
+                        const li = document.createElement('li');
+                        li.className = "p-4 flex items-center justify-between hover:bg-slate-50 transition";
+                        li.innerHTML = `
+                            <div class="flex items-center gap-3 overflow-hidden">
+                                <span class="text-2xl">📄</span>
+                                <div class="min-w-0">
+                                    <p class="font-medium text-slate-800 truncate">${file.name}</p>
+                                    <p class="text-xs text-slate-400">${file.size} · ${file.time}</p>
+                                </div>
+                            </div>
+                            <a href="/files/${file.name}" download class="px-4 py-2 bg-blue-100 text-blue-600 rounded-lg text-sm hover:bg-blue-200 shrink-0">下载</a>
+                        `;
+                        list.appendChild(li);
+                    });
+                });
+        }
+
+        // 页面加载时获取一次列表
+        loadFiles();
+const qrContainer = document.getElementById('qr-container');
+        let qrGenerated = false;
+
+        // 4. 获取服务器 IP 并生成二维码
+        function initQR() {
+            fetch('/api/address')
+                .then(res => res.json())
+                .then(data => {
+                    // 显示文字版 IP
+                    document.getElementById('server-ip').innerText = `本机 IP: ${data.ip} (端口 3001)`;
+                    
+                    // 生成二维码图片
+                    if (!qrGenerated) {
+                        new QRCode(document.getElementById("qrcode"), {
+                            text: data.url,
+                            width: 180,
+                            height: 180,
+                            colorDark : "#000000",
+                            colorLight : "#ffffff",
+                            correctLevel : QRCode.CorrectLevel.H
+                        });
+                        qrGenerated = true;
+                    }
+                });
+        }
+
+        // 5. 切换二维码显示/隐藏
+        function toggleQR() {
+            qrContainer.classList.toggle('hidden');
+        }
+
+        // 页面加载时先去获取一下 IP 信息（但不一定马上显示二维码框）
+        initQR();
+
+    </script>
+</body>
+</html>
